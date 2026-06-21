@@ -1,0 +1,6 @@
+{
+  "name": "AI Resume Optimizer & Personal Career Coach",
+  "description": "Yapay zekâ destekli CV optimizasyonu, ATS analizi, sesli mülakat provası ve profesyonel kurumsal avatar üretimi sunan uçtan uca kariyer asistanı.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

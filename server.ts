@@ -1,0 +1,653 @@
+import express from "express";
+import path from "path";
+import { GoogleGenAI, Type, Modality } from "@google/genai";
+import dotenv from "dotenv";
+import { createServer as createViteServer } from "vite";
+
+dotenv.config();
+
+const app = express();
+const PORT = 3000;
+
+// Increase payload limits for PDF base64 handling
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ limit: "50mb", extended: true }));
+
+// Initialize Google Gen AI SDK
+const apiKey = process.env.GEMINI_API_KEY2 || process.env.GEMINI_API_KEY;
+
+const ai = new GoogleGenAI({
+  apiKey: apiKey,
+  httpOptions: {
+    headers: {
+      "User-Agent": "aistudio-build",
+    },
+  },
+});
+
+// Helper: Strip HTML tags to extract readable text
+function cleanHtml(html: string): string {
+  return html
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, " ")
+    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Helper: Format Google Gen AI API errors beautifully
+function formatApiError(error: any): string {
+  if (!error) return "An unknown error occurred.";
+  
+  const msg = error.message || String(error);
+  
+  if (typeof msg === "string" && msg.trim().startsWith("{")) {
+    try {
+      const parsed = JSON.parse(msg);
+      if (parsed.error && parsed.error.message) {
+        return parsed.error.message;
+      }
+    } catch (e) {
+      // Ignore JSON parsing failure
+    }
+  }
+
+  if (error.status === "PERMISSION_DENIED" || (error.code === 403) || msg.includes("PERMISSION_DENIED")) {
+    if (msg.includes("unrestricted keys")) {
+      return "Gemini API request denied due to unrestricted key usage. Please ensure your API key on AI Studio features the required restrictions or update your API key context.";
+    }
+    return `Access Denied: ${msg}`;
+  }
+
+  return msg;
+}
+
+// 1. API: Parse Resume PDF into structured ResumeData
+app.post("/api/parse-resume-pdf", async (req, res) => {
+  const { pdfBase64, customText } = req.body;
+
+  if (!pdfBase64 && !customText) {
+    return res.status(400).json({ error: "No PDF data or text provided for parsing." });
+  }
+
+  try {
+    const contents: any[] = [];
+
+    if (pdfBase64) {
+      // Clean base64 prefix if present
+      const cleanBase64 = pdfBase64.replace(/^data:application\/pdf;base64,/, "");
+      contents.push({
+        inlineData: {
+          mimeType: "application/pdf",
+          data: cleanBase64,
+        },
+      });
+    }
+
+    contents.push({
+      text: `Extract and compile the professional background from this CV/resume into a completely structured JSON output conforming to the responseSchema. Make sure to populate every single section appropriately (personalInfo, summary, experience, education, skills, projects, certifications). If a section cannot be found, provide a representative sample empty structure or extrapolate accurately based on available clues. Break bullet points into separate array entries under experience and projects.`,
+    });
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            personalInfo: {
+              type: Type.OBJECT,
+              properties: {
+                name: { type: Type.STRING },
+                title: { type: Type.STRING },
+                email: { type: Type.STRING },
+                phone: { type: Type.STRING },
+                location: { type: Type.STRING },
+                website: { type: Type.STRING },
+              },
+              required: ["name", "title", "email", "phone", "location", "website"],
+            },
+            summary: { type: Type.STRING },
+            experience: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  id: { type: Type.STRING },
+                  jobTitle: { type: Type.STRING },
+                  company: { type: Type.STRING },
+                  location: { type: Type.STRING },
+                  startDate: { type: Type.STRING },
+                  endDate: { type: Type.STRING },
+                  current: { type: Type.BOOLEAN },
+                  description: {
+                    type: Type.ARRAY,
+                    items: { type: Type.STRING },
+                  },
+                },
+                required: ["id", "jobTitle", "company"],
+              },
+            },
+            education: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  id: { type: Type.STRING },
+                  degree: { type: Type.STRING },
+                  fieldOfStudy: { type: Type.STRING },
+                  school: { type: Type.STRING },
+                  location: { type: Type.STRING },
+                  graduationDate: { type: Type.STRING },
+                  description: { type: Type.STRING },
+                },
+                required: ["id", "degree", "school"],
+              },
+            },
+            skills: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
+            },
+            projects: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  id: { type: Type.STRING },
+                  title: { type: Type.STRING },
+                  role: { type: Type.STRING },
+                  technologies: {
+                    type: Type.ARRAY,
+                    items: { type: Type.STRING },
+                  },
+                  link: { type: Type.STRING },
+                  description: {
+                    type: Type.ARRAY,
+                    items: { type: Type.STRING },
+                  },
+                },
+                required: ["id", "title"],
+              },
+            },
+            certifications: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  id: { type: Type.STRING },
+                  name: { type: Type.STRING },
+                  issuer: { type: Type.STRING },
+                  date: { type: Type.STRING },
+                },
+                required: ["id", "name"],
+              },
+            },
+          },
+          required: ["personalInfo", "summary", "experience", "education", "skills", "projects", "certifications"],
+        },
+      },
+    });
+
+    const parsedData = JSON.parse(response.text || "{}");
+    res.json({ resume: parsedData });
+  } catch (error: any) {
+    console.error("Resume parsing error:", error);
+    res.status(500).json({ error: formatApiError(error) });
+  }
+});
+
+// 2. API: Parse/scrape Job Posting link or text
+app.post("/api/parse-job-posting", async (req, res) => {
+  const { url, rawText } = req.body;
+
+  if (!url && !rawText) {
+    return res.status(400).json({ error: "Either job posting URL or text must be provided." });
+  }
+
+  let textToParse = rawText || "";
+
+  if (url) {
+    try {
+      // Crawl/fetch online job posting
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s timeout
+
+      const webRes = await fetch(url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        },
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!webRes.ok) {
+        throw new Error(`Failed to load page: HTTP ${webRes.status}`);
+      }
+
+      const html = await webRes.text();
+      textToParse = cleanHtml(html);
+    } catch (parseErr: any) {
+      console.error("Web scrape failed, using fallback keyword parsing:", parseErr);
+      return res.status(500).json({
+        error: `Could not reach the URL directly. You can instead copy-paste the text content of the job description below. Details: ${parseErr.message}`,
+      });
+    }
+  }
+
+  try {
+    // Standardize text lengths to protect tokens
+    const trimmedInput = textToParse.slice(0, 8000);
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: `Extract and structure the core job posting requirements from the following text:
+      ---
+      ${trimmedInput}
+      ---`,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            title: { type: Type.STRING },
+            company: { type: Type.STRING },
+            summary: { type: Type.STRING },
+            keySkills: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
+              description: "Must-have key technical or professional skills required.",
+            },
+            niceToHaveSkills: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
+              description: "Bonus, elective, preferred, or soft skills.",
+            },
+            experienceRequired: { type: Type.STRING },
+            educationRequired: { type: Type.STRING },
+            responsibilities: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
+            },
+          },
+          required: ["title", "company", "summary", "keySkills", "niceToHaveSkills", "responsibilities"],
+        },
+      },
+    });
+
+    const parsedRequirements = JSON.parse(response.text || "{}");
+    res.json({ requirements: parsedRequirements });
+  } catch (error: any) {
+    console.error("Job description parse error:", error);
+    res.status(500).json({ error: `Failed to extract job listing requirements: ${formatApiError(error)}` });
+  }
+});
+
+// 3. API: Tailor Resume to Job Requirements + Suggestions
+app.post("/api/tailor-resume", async (req, res) => {
+  const { resumeData, jobRequirements, customPrompt } = req.body;
+
+  if (!resumeData) {
+    return res.status(400).json({ error: "Resume data is required." });
+  }
+
+  try {
+    const prompt = `You are a high-level CV and Resume tailoring engine. You specialize in maximizing ATS score alignment while retaining 100% of the candidate's real honesty and integrity (never invent fictitious experience, instead map their real achievements to language used in the modern recruiting field).
+
+Task: Optimize the candidate's resume data targeting the specific job posting requirements provided below.
+
+Resume Data:
+${JSON.stringify(resumeData, null, 2)}
+
+Target Job Requirements:
+${JSON.stringify(jobRequirements, null, 2)}
+
+User Tailoring Instructions / Focus Intent:
+"${customPrompt || "Default Optimization: Maximize ATS compatibility and highlight relevant skills."}"
+
+Instructions:
+1. Revamp the 'summary' to integrate target keywords organically, explaining value proposition within 3 sentences.
+2. Refine experienced achievements (projects/experience) to show impact using metrics where possible while preserving dates, company names, and core truths. Focus description points using strong action verbs that map directly to the key skills and responsibilities of the job.
+3. Align the skills array with keywords mentioned in the job description that the candidate likely possesses (extrapolating from their background).
+4. Provide the fully updated resume matching the same Resume structure.
+5. Provide a constructive, friendly audit object with an overall ATS score (0-100), key strengths found, gaps to address, and clean specific recommendations.
+
+Generate both outputs together in a single JSON schema.`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            tailoredResume: {
+              type: Type.OBJECT,
+              properties: {
+                personalInfo: {
+                  type: Type.OBJECT,
+                  properties: {
+                    name: { type: Type.STRING },
+                    title: { type: Type.STRING },
+                    email: { type: Type.STRING },
+                    phone: { type: Type.STRING },
+                    location: { type: Type.STRING },
+                    website: { type: Type.STRING },
+                  },
+                  required: ["name", "title", "email", "phone", "location", "website"],
+                },
+                summary: { type: Type.STRING },
+                experience: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      id: { type: Type.STRING },
+                      jobTitle: { type: Type.STRING },
+                      company: { type: Type.STRING },
+                      location: { type: Type.STRING },
+                      startDate: { type: Type.STRING },
+                      endDate: { type: Type.STRING },
+                      current: { type: Type.BOOLEAN },
+                      description: {
+                        type: Type.ARRAY,
+                        items: { type: Type.STRING },
+                      },
+                    },
+                    required: ["id", "jobTitle", "company"],
+                  },
+                },
+                education: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      id: { type: Type.STRING },
+                      degree: { type: Type.STRING },
+                      fieldOfStudy: { type: Type.STRING },
+                      school: { type: Type.STRING },
+                      location: { type: Type.STRING },
+                      graduationDate: { type: Type.STRING },
+                      description: { type: Type.STRING },
+                    },
+                    required: ["id", "degree", "school"],
+                  },
+                },
+                skills: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                },
+                projects: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      id: { type: Type.STRING },
+                      title: { type: Type.STRING },
+                      role: { type: Type.STRING },
+                      technologies: {
+                        type: Type.ARRAY,
+                        items: { type: Type.STRING },
+                      },
+                      link: { type: Type.STRING },
+                      description: {
+                        type: Type.ARRAY,
+                        items: { type: Type.STRING },
+                      },
+                    },
+                    required: ["id", "title"],
+                  },
+                },
+                certifications: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      id: { type: Type.STRING },
+                      name: { type: Type.STRING },
+                      issuer: { type: Type.STRING },
+                      date: { type: Type.STRING },
+                    },
+                    required: ["id", "name"],
+                  },
+                },
+              },
+              required: ["personalInfo", "summary", "experience", "education", "skills", "projects", "certifications"],
+            },
+            feedback: {
+              type: Type.OBJECT,
+              properties: {
+                score: { type: Type.INTEGER },
+                strengths: { type: Type.ARRAY, items: { type: Type.STRING } },
+                gaps: { type: Type.ARRAY, items: { type: Type.STRING } },
+                recommendations: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      section: { type: Type.STRING },
+                      description: { type: Type.STRING },
+                      originalText: { type: Type.STRING },
+                      suggestedText: { type: Type.STRING },
+                    },
+                    required: ["section", "description", "suggestedText"],
+                  },
+                },
+              },
+              required: ["score", "strengths", "gaps", "recommendations"],
+            },
+          },
+          required: ["tailoredResume", "feedback"],
+        },
+      },
+    });
+
+    const parsedResult = JSON.parse(response.text || "{}");
+    res.json(parsedResult);
+  } catch (error: any) {
+    console.error("Resume tailoring error:", error);
+    res.status(500).json({ error: formatApiError(error) });
+  }
+});
+
+// 4. API: Multi-turn Chat interface with different model mapping
+app.post("/api/chat", async (req, res) => {
+  const { history, message, role, modelMode } = req.body;
+
+  if (!message) {
+    return res.status(400).json({ error: "Message is required." });
+  }
+
+  // Choose appropriate model based on requested speed/reasoning complexity
+  let selectedModel = "gemini-3.5-flash"; // default general
+  if (modelMode === "pro") {
+    selectedModel = "gemini-3.1-pro-preview";
+  } else if (modelMode === "fast") {
+    selectedModel = "gemini-3.1-flash-lite";
+  }
+
+  // Prepare system instructions for different chatbot roles
+  let systemInstruction = "";
+  if (role === "ats_reviewer") {
+    systemInstruction = `You are an elite ATS Compliance Officer and veteran HR Recruiter. 
+Your tone is professional, direct, analytical, and highly constructive.
+Help the user restructure achievements to pass ATS screenings effortlessly, flag resume parsing risks, optimize lists of core skills with precision keywords, and audit spacing issues.
+Prioritize short sentences, clear feedback, and professional vocabulary. Exclude unneeded fluff.`;
+  } else if (role === "branding_specialist") {
+    systemInstruction = `You are a Professional Executive Branding Director and visual storyteller. 
+Your tone is encouraging, refined, precise, and branding-oriented. 
+Help the user synthesize powerful elevator summaries, polish professional statements, craft modern summaries, and define visual layout tips to make their personal brand stand out in a crowd.`;
+  } else {
+    // career_coach default
+    systemInstruction = `You are a Seasoned Career Development Coach and Executive Career Consultant. 
+Your tone is highly motivational, strategic, coaching-focused, and supportive. 
+Help the user frame their experiences using impact actions, the STAR framework (Situation, Task, Action, Result) with tangible metrics, and brainstorm high-impact additions to their tech stack, volunteer experience, or volunteer leadership.`;
+  }
+
+  try {
+    // Map existing message format to Gemini content parts
+    const processedContents = (history || []).map((msg: any) => ({
+      role: msg.sender === "user" ? "user" : "model",
+      parts: [{ text: msg.text }],
+    }));
+
+    // Add new user message
+    processedContents.push({
+      role: "user",
+      parts: [{ text: message }],
+    });
+
+    const response = await ai.models.generateContent({
+      model: selectedModel,
+      contents: processedContents,
+      config: {
+        systemInstruction,
+        temperature: 0.7,
+      },
+    });
+
+    res.json({ text: response.text });
+  } catch (error: any) {
+    console.error("Gemini chatbot error:", error);
+    res.status(500).json({ error: formatApiError(error) });
+  }
+});
+
+// 5. API: Text-to-Speech (TTS) using target gemini-3.1-flash-tts-preview
+app.post("/api/generate-speech", async (req, res) => {
+  const { text, voice } = req.body;
+
+  if (!text) {
+    return res.status(400).json({ error: "Text to speak is required." });
+  }
+
+  const voiceName = voice || "Zephyr"; // 'Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr'
+
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3.1-flash-tts-preview",
+      contents: [{ parts: [{ text: `Read this resume pitch or tailored summary beautifully and completely: ${text}` }] }],
+      config: {
+        responseModalities: [Modality.AUDIO],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: { voiceName },
+          },
+        },
+      },
+    });
+
+    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+
+    if (!base64Audio) {
+      throw new Error("No audio content returned from speech generator.");
+    }
+
+    res.json({ audioBase64: base64Audio });
+  } catch (error: any) {
+    console.error("TTS generation error:", error);
+    res.status(500).json({ error: formatApiError(error) });
+  }
+});
+
+// 6. API: High-Quality Image Generation using target gemini-3-pro-image-preview
+app.post("/api/generate-image", async (req, res) => {
+  const { prompt, size } = req.body;
+
+  if (!prompt) {
+    return res.status(400).json({ error: "Prompt is required." });
+  }
+
+  // In case gemini-3-pro-image-preview hits temporary quotas or model configuration variations,
+  // we first call gemini-3-pro-image-preview, and fall back to solid image models to keep experience perfect.
+  const modelName = "gemini-3-pro-image-preview";
+  const imageSize = size || "1K"; // '1K', '2K', '4K' are supported in the metadata specification.
+
+  try {
+    const response = await ai.models.generateContent({
+      model: modelName,
+      contents: {
+        parts: [
+          {
+            text: `High professional quality executive visual: ${prompt}. Clean minimalist layout, suitable for a professional avatar portrait or sleek resume background banner accent.`,
+          },
+        ],
+      },
+      config: {
+        imageConfig: {
+          aspectRatio: "1:1",
+          imageSize,
+        },
+      },
+    });
+
+    let base64Image = "";
+
+    // Parse candidates for the image parts
+    const parts = response.candidates?.[0]?.content?.parts || [];
+    for (const part of parts) {
+      if (part.inlineData && part.inlineData.data) {
+        base64Image = part.inlineData.data;
+        break;
+      }
+    }
+
+    // fallback to general 'gemini-2.5-flash-image' if base64Image is empty
+    if (!base64Image) {
+      console.log("Empty response part from primary image generator, attempting fallback model...");
+      const fallbackResponse = await ai.models.generateContent({
+        model: "gemini-2.5-flash-image",
+        contents: {
+          parts: [{ text: prompt }],
+        },
+        config: {
+          imageConfig: {
+            aspectRatio: "1:1",
+          },
+        },
+      });
+
+      const fallbackParts = fallbackResponse.candidates?.[0]?.content?.parts || [];
+      for (const part of fallbackParts) {
+        if (part.inlineData && part.inlineData.data) {
+          base64Image = part.inlineData.data;
+          break;
+        }
+      }
+    }
+
+    if (!base64Image) {
+      throw new Error("No image data returned from generation API.");
+    }
+
+    res.json({ imageUrl: `data:image/png;base64,${base64Image}` });
+  } catch (error: any) {
+    console.error("Image generation error:", error);
+    res.status(500).json({ error: formatApiError(error) });
+  }
+});
+
+// Vite middleware configuration for development mode
+async function startServer() {
+  if (process.env.NODE_ENV !== "production") {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: "spa",
+    });
+    app.use(vite.middlewares);
+  } else {
+    const distPath = path.join(process.cwd(), "dist");
+    app.use(express.static(distPath));
+    app.get("*", (req, res) => {
+      res.sendFile(path.join(distPath, "index.html"));
+    });
+  }
+
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`AI Resume Optimizer server running on http://localhost:${PORT}`);
+  });
+}
+
+startServer();

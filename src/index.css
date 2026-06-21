@@ -1,0 +1,73 @@
+@import "tailwindcss";
+
+@variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-slate-850: #1e293b;
+}
+
+/* Dark theme overrides for the live resume-builder-form component */
+.dark #resume-builder-form .bg-white {
+  background-color: #0f172a !important; /* bg-slate-900 */
+  border-color: #1e293b !important; /* border-slate-800 */
+}
+
+.dark #resume-builder-form .bg-slate-50,
+.dark #resume-builder-form .bg-slate-50\/50 {
+  background-color: #070b13 !important; /* bg-slate-950/40 */
+  border-color: #1e293b !important;
+}
+
+.dark #resume-builder-form input,
+.dark #resume-builder-form textarea {
+  background-color: #020617 !important; /* bg-slate-950 */
+  color: #f1f5f9 !important; /* text-slate-100 */
+  border-color: #1e293b !important; /* border-slate-800 */
+}
+
+.dark #resume-builder-form input:focus,
+.dark #resume-builder-form textarea:focus {
+  background-color: #0f172a !important; /* focus:bg-slate-900 */
+  border-color: #3b82f6 !important; /* focus:border-blue-500 */
+}
+
+.dark #resume-builder-form label {
+  color: #94a3b8 !important; /* text-slate-400 */
+}
+
+.dark #resume-builder-form h3 {
+  color: #cbd5e1 !important; /* text-slate-300 */
+}
+
+.dark #resume-builder-form .text-slate-800 {
+  color: #e2e8f0 !important; /* text-slate-200 */
+}
+
+.dark #resume-builder-form .border-slate-200 {
+  border-color: #1e293b !important; /* border-slate-800 */
+}
+
+.dark #resume-builder-form span.hover\:bg-red-50:hover {
+  background-color: #b91c1c !important; /* dark raw red for deletion state */
+  color: #ffffff !important;
+  border-color: #ef4444 !important;
+}
+
+.dark #resume-builder-form span.hover\:bg-red-50 {
+  background-color: #1e293b !important;
+  color: #cbd5e1 !important;
+  border-color: #1e293b !important;
+}
+
+.dark #resume-builder-form span.hover\:bg-red-50 svg {
+  color: #94a3b8 !important;
+}
+
+.dark #resume-builder-form span.hover\:bg-red-50:hover svg {
+  color: #ffffff !important;
+}
+
+.dark #resume-builder-form button.border-slate-200:hover {
+  background-color: #1e293b !important;
+  color: #ffffff !important;
+}
