@@ -1,108 +1,91 @@
 # AI Resume Optimizer & Personal Career Coach 🚀
-*(Yapay Zekâ Destekli CV Optimizatörü ve Kişisel Kariyer Koçu)*
+*(Yapay Zekâ Destekli CV Optimizasyonu ve Akıllı Kariyer Asistanı)*
 
-Bu proje; iş başvurusu süreçlerinizi kolaylaştırmak, özgeçmişinizi (CV) hedeflediğiniz iş ilanlarına mükemmel şekilde uyarlamak, mülakatlara hazırlanmak ve kariyer hedeflerinize ulaşmak için geliştirilmiş, tam yığınlı (Full-Stack) yapay zekâ destekli bir kariyer asistanı uygulamasıdır.
-
----
-
-## 📌 Projenin Amacı (Project Purpose)
-
-Günümüz iş dünyasında, özgeçmişlerin otomatik aday takip sistemleri (ATS - Applicant Tracking Systems) ve insan kaynakları uzmanları tarafından saniyeler içinde taranıp elendiği bilinmektedir. **AI Resume Optimizer & Personal Career Coach**'un temel amacı, adayların mevcut özgeçmişlerini hedef iş ilanlarının kriterlerine göre optimize ederek ATS eşleşme puanlarını artırmak, eksik yönlerini gidermek ve adayları mülakat sürecine kadar uçtan uca desteklemektir.
-
-Uygulama, **Google Gemini API** (Google Gen AI SDK) gücünü kullanarak güvenli ve sunucu taraflı (server-side) işlemlerle profesyonel kariyer koçluğu sunar.
+Bu proje; iş başvurusu süreçlerini hızlandırmak, adayların mevcut özgeçmişlerini hedef iş ilanlarına en ideal şekilde uyarlamak, mülakatlara hazırlanmak ve kariyer planlaması yapmak üzere sıfırdan tasarlayıp geliştirdiğim **üretim kalitesinde (production-ready)**, tam yığınlı (Full-Stack) yapay zekâ platformudur.
 
 ---
 
-## 📋 Kullanıcı İsterleri ve Geliştirme Süreci (User Requirements & Implementation History)
+## 📌 Mimari Vizyon ve Çözülen Problemler (Architectural Vision)
 
-Geliştirme süreci boyunca talep ettiğiniz ve uygulamaya başarıyla entegre edilen tüm isterler aşağıda detaylandırılmıştır:
+Modern iş alımlarında adaylar, otomatik takip sistemleri (**ATS - Applicant Tracking Systems**) ve hızlı ön eleme süreçleri nedeniyle fark edilmekte zorlanmaktadır. Projenin ana hedefi, adayların gerçek yetkinliklerini abartıdan uzak tutarak, hedeflenen rollerin "diliyle" ifade edebilen güvenli bir asistan sunmaktır.
 
-### 1. 📄 Akıllı CV/Özgeçmiş Ayrıştırma (Resume PDF Parsing)
-*   **İster:** Kullanıcıların mevcut PDF formatındaki özgeçmişlerini sisteme yükleyebilmesi veya doğrudan metin olarak yapıştırabilmesi.
-*   **Çözüm:** `pdfBase64` veya özel metin formatlarını sunucu tarafına ileten ve Gemini API yardımıyla CV'yi yapılandırılmış JSON verilerine dönüştüren sistem entegre edildi.
+Portföyümün kalitesini ve teknik olgunluğunu yansıtacak şekilde kurguladığım mimari detaylar:
 
-### 2. 🔍 İş İlanı Analizi ve Kriter Çıkarma (Requirements Parser)
-*   **İster:** Hedeflenen bir iş ilanının açıklamasından veya bağlantısından (URL) kritik beceriler, sertifikalar ve gereksinimlerin otomatik tespit edilmesi.
-*   **Çözüm:** İş ilanı metinlerini analiz ederek gerekli yetkinlikleri, teknik ve sosyal becerileri çıkaran analiz motoru kuruldu.
+### 1. 🔒 Güvenlik & Sıfır İstemci Sızıntısı (Zero-Client Key Leakage)
+*   Tüm API anahtarları, hassas konfigürasyonlar ve harici servis çağrıları sunucu katmanında (`server.ts`) izole edilmiştir.
+*   Tarayıcı tarafına (client-side) hiçbir şekilde API key veya gizli değişken sızdırılmaz.
 
-### 3. 🎯 CV Kişiselleştirme ve Optimizasyon (Resume Tailor Engine)
-*   **İster:** Çıkarılan iş gereksinimlerine göre CV'deki özet, deneyim maddeleri ve yeteneklerin abartıya ve sahte bilgiye kaçmadan otomatik optimize edilmesi.
-*   **Çözüm:** Özgeçmişi hedef iş ilanına göre dinamik olarak optimize eden, ATS uyumluluğunu maksimuma çıkaran özelleştirme sistemi geliştirildi.
+### 2. 🛡️ SSRF Koruması (SSRF Shielding)
+*   Kullanıcıların hedef iş ilanlarını analiz edebilmesi için sunulan link tarama (`/api/parse-job-posting`) servisinde, sunucunun yerel ağlara veya bulut metadata servislerine erişmesini engelleyen özel **SSRF Filtreleme** algoritması geliştirilmiştir.
+*   Giriş yapılan URL'lerin şeması (yalnızca `http`/`https`), localhost IP'leri (`127.0.0.1`, `0.0.0.0`, `::1`), RFC 1918 özel ağ aralıkları (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), ve link-local bulut metadata adresleri (`169.254.169.254`) regex ve octet kontrol mekanizmalarıyla engellenir.
 
-### 4. 📊 Değişiklik İnceleme Penceresi (Audit & Diff Panel)
-*   **İster:** Yapılan değişiklikleri, eski/yeni kelime karşılaştırmalarını ve ATS analiz raporunu görselleştiren bir arayüz.
-*   **Çözüm:** Değişiklikleri şeffaf bir şekilde gösteren görsel fark (diff) paneli, kontrol listeleri ve iyileştirme skorları içeren `AuditPanel` tasarlandı.
+### 3. 🚦 Akıllı Hız Sınırlandırıcı Mekanizması (In-Memory Rate-Limiter)
+*   Sistemi kötü amaçlı döngülerden, bütçe tüketim risklerinden ve DoS (Denial of Service) girişimlerinden korumak amacıyla sunucu tarafında IP tabanlı **Zaman-Pencereli Hız Sınırlandırıcı** entegre edilmiştir.
+*   Her API fonksiyonuna özel limitler (Örn: Ağır yapay zekâ görselleri için dakikada 3 istek, chat servisleri için dakikada 20 istek gibi) belirlenmiştir.
 
-### 5. 🎤 Sözlü Mülakat Provası (Speech Rehearsal & TTS)
-*   **İster:** Hazırlanan CV özetini, mülakat konuşmalarını veya asansör konuşmasını (pitch) sesli olarak prova edebilme.
-*   **Çözüm:** Sunucu taraflı Ses Sentezleme (Text-to-Speech - TTS) entegrasyonu sağlandı. Kullanıcılar yapay zekânın kendilerine özel ürettiği mülakat ipuçlarını ve özgeçmiş sunumlarını doğrudan tarayıcı üzerinden dinleyip prova edebilmektedir.
+### 4. 📦 Katmanlı Payload Sınırlandırması (DoS Protection)
+*   Uygulamadaki tüm JSON gövde (body) limitleri varsayılan olarak güvenli `2mb` eşiğine çekilmiştir.
+*   Base64 PDF yükleme gereksinimi duyan `/api/parse-resume-pdf` rotası, rotalar seviyesinde izole edilerek sadece bu endpoint için kontrollü `15mb` limiti etkin kılınmıştır.
 
-### 6.   Kişisel Kariyer Koçu Sohbet Alanı (Career Coach Chat)
-*   **İster:** CV dışında genel kariyer tavsiyeleri almak, mülakat simülasyonları yapmak veya ön yazı (Cover Letter) tasarlamak için bir danışman.
-*   **Çözüm:** Gerçek zamanlı, belleğe sahip ve tamamen özelleştirilmiş yönlendirmeler sunan interaktif Kariyer Sohbet Paneli entegre edildi.
-
-### 7. 🖼️ Profesyonel Avatar/Başlık Üretici (Professional Avatar Generator)
-*   **İster:** Sosyal medya veya CV için profesyonel iş dünyası formatında yapay zekâ destekli görsel/avatar oluşturulabilmesi.
-*   **Çözüm:** Gemini Imagen yetenekleri ile sunucu taraflı görsel üretim altyapısı kurularak özelleştirilmiş kurumsal veya teknoloji konseptli avatarlar oluşturma ekranı entegre edildi.
+### 5. 🎯 Merkezi Model Konfigürasyonu (Model Registry Pattern)
+*   Gemini API'sindeki model deprecation veya versiyon güncellemelerinde kod genelinde oluşabilecek kırılmaları önlemek adına, tüm yapay zekâ model atamaları sunucu tarafında tek bir `MODEL_CONFIG` nesnesinde merkezileştirilmiştir.
 
 ---
 
-## 🔒 Güvenlik, API Anahtarları ve Kısıtlamalar (Security & API Keys Setup)
+## 🧠 Sektörel Yetenekler ve Teknolojik Çözümler
 
-Google Bulut Platformunda (GCP) kısıtlanmamış genel anahtarların (unrestricted keys) kullanımıyla ilgili son dönemdeki güncellemeler ve yaşayabileceğiniz olası aksaklıklar öngörülerek sisteme şu kritik güvenlik önlemleri alınmıştır:
+Platform akıcı bir kullanıcı deneyimi sunabilmek adına modüler mikro-etkileşimlerle donatılmıştır:
 
-1.  **Hata Yönetimi ve Kullanıcı Bilgilendirmesi:** Gemini API'sinden gelen tüm erişim ve yetki kısıtlama hataları (`unrestricted keys` uyarısı, `PERMISSION_DENIED` vb.) yakalanarak kullanıcıya arayüzde en açıklayıcı ve temiz hata formatında yansıtılır.
-2.  **Yedek veya Alternatif API Anahtarı (`GEMINI_API_KEY2`):**
-    *   Eğer birincil anahtarınız GCP üzerindeki kısıtlama politikaları nedeniyle geçici kesintilere uğruyor ya da faturalandırma (billing) engeline takılıyorsa, projenizde yedek bir anahtar kullanabilmeniz için sunucu katmanına `GEMINI_API_KEY2` desteği eklenmiştir.
-    *   Sunucu, öncelikle `GEMINI_API_KEY2` değerini kontrol eder; bulunamazsa varsayılan `GEMINI_API_KEY` değerine geçiş yapar.
+*   **Akıllı CV Ayrıştırma:** Google Gen AI SDK yardımıyla, yüklenen PDF dosyalarındaki yapılandırılmamış verileri anlamsal olarak analiz eder ve kusursuz bir JSON şemasına dönüştürür.
+*   **İş İlanı Analizörü:** Hedef iş tanımındaki teknik kelimeleri, yetkinlikleri ve beklenen sorumlulukları süzerek dinamik bir gereksinim profili çıkarır.
+*   **Dinamik CV Optimizasyon Motoru:** Adayın gerçek tecrübe geçmişini bozmadan, iş profilindeki anahtar kelimeler ve beklentilerle ATS uyumlu olacak şekilde yeniden dilde harmanlar.
+*   **İnteraktif Değişiklik Paneli (Audit Panel):** Önerilen biçimlendirmeleri ve kelime değişikliklerini eski/yeni haliyle yan yana gösteren (inline diff) ve ATS skor raporunu sunan kullanıcı dostu takip ekranı sunar.
+*   **Sesli Mülakat Provası (TTS):** Optimize edilen CV özetlerini veya mülakat esnasında kullanılacak "asansör konuşmalarını" (elevator pitch) sunucu tarafında ses dosyası haline getirerek tarayıcı üzerinden mülakat provası yapılmasına olanak tanır.
+*   **Birebir Kariyer Koçu Sohbeti:** Gelişmiş hafıza bağlamına sahip sohbet arayüzü sayesinde adaya özel hazırlanan akıllı mülakat simülasyonları ve kariyer danışmanlığı yürütülür.
+*   **Kurumsal Avatar Tasarımcısı:** Sektörel formatlara (Corporate, Creative, Technical) göre profesyonel kalitede kişiselleştirilmiş LinkedIn veya özgeçmiş avatarları oluşturur.
 
 ---
 
-## 🛠️ Teknik Altyapı ve Çalıştırma (Technical Stack & Commands)
+## 🛠️ Teknik Altyapı ve Kurulum (Technical Stack & Setup)
 
-### Kullanılan Teknolojiler
-*   **Frontend:** React (TypeScript ile), Vite, Tailwind CSS (Hızlı ve responsive stil katmanı), Motion (Akıcı geçiş animasyonları), Lucide React (Simgeler).
-*   **Backend:** Node.js (Express framework), Google Gen AI SDK (`@google/genai`).
-*   **Güvenlik:** Tüm API anahtarları sunucu tarafında (`server.ts`) saklanır ve tarayıcıya asla sızdırılmaz.
+### Teknolojik Tercihler
+*   **Frontend:** React (TypeScript), Vite, Tailwind CSS, Motion (Akıcı mikro-etkileşim animasyonları), Lucide React.
+*   **Backend:** Node.js, Express, Google Gen AI SDK (`@google/genai`).
 
-### Kurulum (Setup)
+### Yerel Kurulum Adımları
 
-Projeyi kendi ortamınızda çalıştırmadan önce `.env` dosyanızı oluşturmalı veya AI Studio Secrets/Settings panelinden aşağıdaki değişkenleri tanımlamalısınız:
-
-```env
-# .env.example dosyasından üretilebilir
-GEMINI_API_KEY="Birincil_Gemini_API_Anahtariniz"
-GEMINI_API_KEY2="Alternatif_Güvenli_Yedek_Gemini_API_Anahtariniz"
-```
-
-### Scriptler (NPM Scripts)
-
-Proje dizininde aşağıdaki komutları kullanabilirsiniz:
-
-*   **Geliştirme Modunu Başlatma (Dev):**
-    ```bash
-    npm run dev
+1.  Proje ana dizininde bir `.env` dosyası oluşturun:
+    ```env
+    # Gemini API anahtarlarınızı buraya ekleyin
+    GEMINI_API_KEY="Birincil_API_Anahtarınız"
+    GEMINI_API_KEY2="Alternatif_Yedek_API_Anahtarınız"
     ```
-    *(Sunucu ve Vite arayüzünü `http://localhost:3000` portundan eşzamanlı ve anında yenilemeli olarak başlatır).*
 
-*   **Derleme/Üretim Paketi Oluşturma (Build):**
-    ```bash
-    npm run build
-    ```
-    *(İstemci kodunu optimize edilmiş statik dosyalara dönüştürür ve sunucu kodunu tek bir `dist/server.cjs` halinde paketler).*
+2.  Projeyi çalıştırmak için aşağıdaki NPM scriptlerini kullanabilirsiniz:
 
-*   **Üretim Sunucusunu Çalıştırma (Start):**
-    ```bash
-    npm run start
-    ```
-    *(Derlenmiş paket üzerinden uygulamayı yayına alır).*
+    *   **Geliştirme Sunucusu (Dev):**
+        ```bash
+        npm run dev
+        ```
+        *(Sunucuyu ve Vite arayüzünü localhost:3000 portu üzerinden senkronize bir biçimde başlatır).*
 
-*   **Statik Tip Kontrolü (Lint):**
-    ```bash
-    npm run lint
-    ```
-    *(JavaScript/TypeScript yazım ve tip kurallarını doğrular).*
+    *   **Üretim Derlemesi (Build):**
+        ```bash
+        npm run build
+        ```
+        *(Sistem kodunu optimize eder ve Node sunucusunu dist/server.cjs olarak paketler).*
+
+    *   **Canlı Ortam Başlatma (Start):**
+        ```bash
+        npm run start
+        ```
+        *(Express sunucusunu yayına alır).*
+
+    *   **Hataları Giderme & Tip Kontrolü (Lint):**
+        ```bash
+        npm run lint
+        ```
+        *(TypeScript yazım ve tip kurallarını kontrol eder).*
 
 ---
-
-*Uygulama başarıyla kurulmuş, test edilmiş ve tüm sistem entegrasyonları tamamlanmıştır. Kariyer yolculuğunuzda başarılar dileriz! 💫*
+*Bu proje, modern yazılım mimarisi, uç nokta güvenliği ve ileri düzey yapay zekâ entegrasyonu prensipleri göz önünde bulundurularak hayata geçirilmiştir. Kariyer yolculuğunuz mükemmel bir özgeçmiş ile başlar!* 🍀

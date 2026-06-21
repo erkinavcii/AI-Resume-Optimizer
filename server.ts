@@ -9,9 +9,119 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
-// Increase payload limits for PDF base64 handling
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ limit: "50mb", extended: true }));
+// Centralized Google Gen AI Model Configuration Directory
+const MODEL_CONFIG = {
+  RESUME_PARSER: "gemini-3.5-flash",
+  JOB_PARSER: "gemini-3.5-flash",
+  RESUME_TAILOR: "gemini-3.5-flash",
+  CHAT_DEFAULT: "gemini-3.5-flash",
+  CHAT_PRO: "gemini-3.1-pro-preview",
+  CHAT_EXPEDITE: "gemini-3.1-flash-lite",
+  TEXT_TO_SPEECH: "gemini-3.1-flash-tts-preview",
+  IMAGE_GENERATOR: "gemini-3-pro-image-preview",
+  IMAGE_FALLBACK: "gemini-2.5-flash-image"
+};
+
+// Payload DoS Mitigation: Apply selective limits.
+// Only the PDF uploading route is authorized up to 15MB. General JSON routing is capped strictly at 2MB.
+app.use("/api/parse-resume-pdf", express.json({ limit: "15mb" }));
+app.use(express.json({ limit: "2mb" }));
+app.use(express.urlencoded({ limit: "2mb", extended: true }));
+
+// In-Memory Time-Window Request Rate Limiter (Abuse Prevention Coordinator)
+interface RateLimitRecord {
+  count: number;
+  resetTime: number;
+}
+const rateLimits = new Map<string, RateLimitRecord>();
+
+function rateLimit(limit: number, windowMs: number) {
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const ip = req.ip || req.headers["x-forwarded-for"] || "anonymous";
+    const key = `${ip}:${req.path}`;
+    const now = Date.now();
+    
+    const record = rateLimits.get(key);
+    if (!record) {
+      rateLimits.set(key, { count: 1, resetTime: now + windowMs });
+      return next();
+    }
+    
+    if (now > record.resetTime) {
+      record.count = 1;
+      record.resetTime = now + windowMs;
+      return next();
+    }
+    
+    if (record.count >= limit) {
+      return res.status(429).json({
+        error: "Kötüye kullanım önleme ve kota koruması kapsamında çok sık istek gönderdiniz. Lütfen bir süre sonra tekrar deneyin.",
+      });
+    }
+    
+    record.count++;
+    next();
+  };
+}
+
+// Memory-Friendly Cleanup Thread (prevent leaks in rate-limit tables)
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, value] of rateLimits.entries()) {
+    if (now > value.resetTime) {
+      rateLimits.delete(key);
+    }
+  }
+}, 5 * 60 * 1000);
+
+// Robust Server Side Request Forgery (SSRF) Guard
+function isSafeUrl(urlStr: string): boolean {
+  try {
+    const parsed = new URL(urlStr);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return false;
+    }
+    
+    const hostname = parsed.hostname.toLowerCase();
+    
+    // Obvious blocked hosts
+    const blockedHosts = [
+      "localhost", "127.0.0.1", "::1", "0.0.0.0", "169.254.169.254",
+      "metadata.google.internal", "metadata", "instance-metadata", "internal"
+    ];
+    if (blockedHosts.some(blocked => hostname === blocked || hostname.endsWith("." + blocked))) {
+      return false;
+    }
+    
+    // Regulate raw IPv4 string patterns to filter out private IP segments
+    const ipv4Regex = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/;
+    const ipMatch = hostname.match(ipv4Regex);
+    if (ipMatch) {
+      const o1 = parseInt(ipMatch[1], 10);
+      const o2 = parseInt(ipMatch[2], 10);
+      const o3 = parseInt(ipMatch[3], 10);
+      const o4 = parseInt(ipMatch[4], 10);
+      
+      if (o1 > 255 || o2 > 255 || o3 > 255 || o4 > 255) return false;
+      
+      if (o1 === 10) return false; // RFC 1918: 10.0.0.0/8
+      if (o1 === 127) return false; // Loopback
+      if (o1 === 169 && o2 === 254) return false; // Cloud Metadata: 169.254.0.0/16
+      if (o1 === 192 && o2 === 168) return false; // RFC 1918: 192.168.0.0/16
+      if (o1 === 172 && (o2 >= 16 && o2 <= 31)) return false; // RFC 1918: 172.16.0.0/12
+      if (o1 === 0) return false; // Local Broadcast host
+    }
+    
+    // Prevent IPv6 loopback and unicast local address spaces
+    if (hostname === "[::1]" || hostname.startsWith("[fe80:") || hostname.startsWith("[fc00:") || hostname.startsWith("[fd")) {
+      return false;
+    }
+    
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 // Initialize Google Gen AI SDK
 const apiKey = process.env.GEMINI_API_KEY2 || process.env.GEMINI_API_KEY;
@@ -63,7 +173,7 @@ function formatApiError(error: any): string {
 }
 
 // 1. API: Parse Resume PDF into structured ResumeData
-app.post("/api/parse-resume-pdf", async (req, res) => {
+app.post("/api/parse-resume-pdf", rateLimit(5, 5 * 60 * 1000), async (req, res) => {
   const { pdfBase64, customText } = req.body;
 
   if (!pdfBase64 && !customText) {
@@ -89,7 +199,7 @@ app.post("/api/parse-resume-pdf", async (req, res) => {
     });
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: MODEL_CONFIG.RESUME_PARSER,
       contents,
       config: {
         responseMimeType: "application/json",
@@ -198,7 +308,7 @@ app.post("/api/parse-resume-pdf", async (req, res) => {
 });
 
 // 2. API: Parse/scrape Job Posting link or text
-app.post("/api/parse-job-posting", async (req, res) => {
+app.post("/api/parse-job-posting", rateLimit(10, 1 * 60 * 1000), async (req, res) => {
   const { url, rawText } = req.body;
 
   if (!url && !rawText) {
@@ -208,6 +318,11 @@ app.post("/api/parse-job-posting", async (req, res) => {
   let textToParse = rawText || "";
 
   if (url) {
+    if (!isSafeUrl(url)) {
+      return res.status(403).json({
+        error: "Sistem güvenliği kapsamındaki SSRF koruması nedeniyle girilen URL adresi engellendi."
+      });
+    }
     try {
       // Crawl/fetch online job posting
       const controller = new AbortController();
@@ -241,7 +356,7 @@ app.post("/api/parse-job-posting", async (req, res) => {
     const trimmedInput = textToParse.slice(0, 8000);
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: MODEL_CONFIG.JOB_PARSER,
       contents: `Extract and structure the core job posting requirements from the following text:
       ---
       ${trimmedInput}
@@ -285,7 +400,7 @@ app.post("/api/parse-job-posting", async (req, res) => {
 });
 
 // 3. API: Tailor Resume to Job Requirements + Suggestions
-app.post("/api/tailor-resume", async (req, res) => {
+app.post("/api/tailor-resume", rateLimit(5, 1 * 60 * 1000), async (req, res) => {
   const { resumeData, jobRequirements, customPrompt } = req.body;
 
   if (!resumeData) {
@@ -316,7 +431,7 @@ Instructions:
 Generate both outputs together in a single JSON schema.`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: MODEL_CONFIG.RESUME_TAILOR,
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -453,7 +568,7 @@ Generate both outputs together in a single JSON schema.`;
 });
 
 // 4. API: Multi-turn Chat interface with different model mapping
-app.post("/api/chat", async (req, res) => {
+app.post("/api/chat", rateLimit(20, 1 * 60 * 1000), async (req, res) => {
   const { history, message, role, modelMode } = req.body;
 
   if (!message) {
@@ -461,11 +576,11 @@ app.post("/api/chat", async (req, res) => {
   }
 
   // Choose appropriate model based on requested speed/reasoning complexity
-  let selectedModel = "gemini-3.5-flash"; // default general
+  let selectedModel = MODEL_CONFIG.CHAT_DEFAULT; // default general
   if (modelMode === "pro") {
-    selectedModel = "gemini-3.1-pro-preview";
+    selectedModel = MODEL_CONFIG.CHAT_PRO;
   } else if (modelMode === "fast") {
-    selectedModel = "gemini-3.1-flash-lite";
+    selectedModel = MODEL_CONFIG.CHAT_EXPEDITE;
   }
 
   // Prepare system instructions for different chatbot roles
@@ -516,7 +631,7 @@ Help the user frame their experiences using impact actions, the STAR framework (
 });
 
 // 5. API: Text-to-Speech (TTS) using target gemini-3.1-flash-tts-preview
-app.post("/api/generate-speech", async (req, res) => {
+app.post("/api/generate-speech", rateLimit(10, 1 * 60 * 1000), async (req, res) => {
   const { text, voice } = req.body;
 
   if (!text) {
@@ -527,7 +642,7 @@ app.post("/api/generate-speech", async (req, res) => {
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3.1-flash-tts-preview",
+      model: MODEL_CONFIG.TEXT_TO_SPEECH,
       contents: [{ parts: [{ text: `Read this resume pitch or tailored summary beautifully and completely: ${text}` }] }],
       config: {
         responseModalities: [Modality.AUDIO],
@@ -553,16 +668,16 @@ app.post("/api/generate-speech", async (req, res) => {
 });
 
 // 6. API: High-Quality Image Generation using target gemini-3-pro-image-preview
-app.post("/api/generate-image", async (req, res) => {
+app.post("/api/generate-image", rateLimit(3, 1 * 60 * 1000), async (req, res) => {
   const { prompt, size } = req.body;
 
   if (!prompt) {
     return res.status(400).json({ error: "Prompt is required." });
   }
 
-  // In case gemini-3-pro-image-preview hits temporary quotas or model configuration variations,
-  // we first call gemini-3-pro-image-preview, and fall back to solid image models to keep experience perfect.
-  const modelName = "gemini-3-pro-image-preview";
+  // In case primary image configuration hits temporary quotas or model variations,
+  // we first call primary generator, and fall back to solid image models to keep experience perfect.
+  const modelName = MODEL_CONFIG.IMAGE_GENERATOR;
   const imageSize = size || "1K"; // '1K', '2K', '4K' are supported in the metadata specification.
 
   try {
@@ -594,11 +709,11 @@ app.post("/api/generate-image", async (req, res) => {
       }
     }
 
-    // fallback to general 'gemini-2.5-flash-image' if base64Image is empty
+    // fallback if base64Image is empty
     if (!base64Image) {
       console.log("Empty response part from primary image generator, attempting fallback model...");
       const fallbackResponse = await ai.models.generateContent({
-        model: "gemini-2.5-flash-image",
+        model: MODEL_CONFIG.IMAGE_FALLBACK,
         contents: {
           parts: [{ text: prompt }],
         },
