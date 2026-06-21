@@ -18,7 +18,7 @@ const MODEL_CONFIG = {
   CHAT_PRO: "gemini-3.1-pro-preview",
   CHAT_EXPEDITE: "gemini-3.1-flash-lite",
   TEXT_TO_SPEECH: "gemini-3.1-flash-tts-preview",
-  IMAGE_GENERATOR: "gemini-3-pro-image-preview",
+  IMAGE_GENERATOR: "gemini-3.1-flash-image",
   IMAGE_FALLBACK: "gemini-2.5-flash-image"
 };
 
@@ -667,7 +667,7 @@ app.post("/api/generate-speech", rateLimit(10, 1 * 60 * 1000), async (req, res) 
   }
 });
 
-// 6. API: High-Quality Image Generation using target gemini-3-pro-image-preview
+// 6. API: High-Quality Image Generation using target gemini-3.1-flash-image
 app.post("/api/generate-image", rateLimit(3, 1 * 60 * 1000), async (req, res) => {
   const { prompt, size } = req.body;
 
@@ -675,12 +675,12 @@ app.post("/api/generate-image", rateLimit(3, 1 * 60 * 1000), async (req, res) =>
     return res.status(400).json({ error: "Prompt is required." });
   }
 
-  // In case primary image configuration hits temporary quotas or model variations,
-  // we first call primary generator, and fall back to solid image models to keep experience perfect.
   const modelName = MODEL_CONFIG.IMAGE_GENERATOR;
   const imageSize = size || "1K"; // '1K', '2K', '4K' are supported in the metadata specification.
+  let base64Image = "";
 
   try {
+    // Attempt generation with primary image model
     const response = await ai.models.generateContent({
       model: modelName,
       contents: {
@@ -698,9 +698,6 @@ app.post("/api/generate-image", rateLimit(3, 1 * 60 * 1000), async (req, res) =>
       },
     });
 
-    let base64Image = "";
-
-    // Parse candidates for the image parts
     const parts = response.candidates?.[0]?.content?.parts || [];
     for (const part of parts) {
       if (part.inlineData && part.inlineData.data) {
@@ -708,10 +705,14 @@ app.post("/api/generate-image", rateLimit(3, 1 * 60 * 1000), async (req, res) =>
         break;
       }
     }
+  } catch (primaryError) {
+    console.warn("Primary image generator failed or threw error, attempting fallback:", primaryError);
+  }
 
-    // fallback if base64Image is empty
-    if (!base64Image) {
-      console.log("Empty response part from primary image generator, attempting fallback model...");
+  // Fallback to general/faster model if primary generation failed or returned empty content
+  if (!base64Image) {
+    try {
+      console.log("Attempting fallback image model content generation...");
       const fallbackResponse = await ai.models.generateContent({
         model: MODEL_CONFIG.IMAGE_FALLBACK,
         contents: {
@@ -731,17 +732,17 @@ app.post("/api/generate-image", rateLimit(3, 1 * 60 * 1000), async (req, res) =>
           break;
         }
       }
+    } catch (fallbackError: any) {
+      console.error("Image generation fallback failed completely:", fallbackError);
+      return res.status(500).json({ error: `Image generation failed with fallback error: ${formatApiError(fallbackError)}` });
     }
-
-    if (!base64Image) {
-      throw new Error("No image data returned from generation API.");
-    }
-
-    res.json({ imageUrl: `data:image/png;base64,${base64Image}` });
-  } catch (error: any) {
-    console.error("Image generation error:", error);
-    res.status(500).json({ error: formatApiError(error) });
   }
+
+  if (!base64Image) {
+    return res.status(500).json({ error: "No image data returned from either generation or fallback API." });
+  }
+
+  res.json({ imageUrl: `data:image/png;base64,${base64Image}` });
 });
 
 // Vite middleware configuration for development mode

@@ -88,4 +88,10 @@ Platform akıcı bir kullanıcı deneyimi sunabilmek adına modüler mikro-etkil
         *(TypeScript yazım ve tip kurallarını kontrol eder).*
 
 ---
+
+### ⚠️ Önemli Güvenlik ve Dağıtım Uyarısı (Disclaimer)
+> [!IMPORTANT]
+> **Güvenlik Sorumluluğu Notu:** Bu proje yerel kullanım ve kişisel portföy prototipi olarak tasarlanmıştır. Güvenlik denetimlerinden (security audit) geçmemiştir. Projeyi bulut servislerinde (Vercel, Render, Cloud Run vb.) genel erişime açacak şekilde deploy etmeden önce gerekli güvenlik önlemlerini almak ve denetlemek tamamen dağıtımı gerçekleştiren kişinin kendi sorumluluğundadır.
+
+---
 *Bu proje, modern yazılım mimarisi, uç nokta güvenliği ve ileri düzey yapay zekâ entegrasyonu prensipleri göz önünde bulundurularak hayata geçirilmiştir. Kariyer yolculuğunuz mükemmel bir özgeçmiş ile başlar!* 🍀
